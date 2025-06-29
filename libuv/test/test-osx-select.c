@@ -39,6 +39,7 @@ static void alloc_cb(uv_handle_t* handle, size_t size, uv_buf_t* buf) {
 
 static void read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   fprintf(stdout, "got data %d\n", ++read_count);
+  fflush(stdout);
 
   if (read_count == 3)
     uv_close((uv_handle_t*) stream, NULL);
@@ -55,12 +56,13 @@ TEST_IMPL(osx_select) {
 
   fd = open("/dev/tty", O_RDONLY);
   if (fd < 0) {
-    LOGF("Cannot open /dev/tty as read-only: %s\n", strerror(errno));
+    fprintf(stderr, "Cannot open /dev/tty as read-only: %s\n", strerror(errno));
+    fflush(stderr);
     return TEST_SKIP;
   }
 
   r = uv_tty_init(uv_default_loop(), &tty, fd, 1);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
 
   uv_read_start((uv_stream_t*) &tty, alloc_cb, read_cb);
 
@@ -70,14 +72,14 @@ TEST_IMPL(osx_select) {
         "feel pretty happy\n";
   for (i = 0, len = strlen(str); i < len; i++) {
     r = ioctl(fd, TIOCSTI, str + i);
-    ASSERT(r == 0);
+    ASSERT_OK(r);
   }
 
   uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
-  ASSERT(read_count == 3);
+  ASSERT_EQ(3, read_count);
 
-  MAKE_VALGRIND_HAPPY();
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
   return 0;
 }
 
@@ -95,27 +97,28 @@ TEST_IMPL(osx_select_many_fds) {
   TEST_FILE_LIMIT(ARRAY_SIZE(tcps) + 100);
 
   r = uv_ip4_addr("127.0.0.1", 0, &addr);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
 
   for (i = 0; i < ARRAY_SIZE(tcps); i++) {
     r = uv_tcp_init(uv_default_loop(), &tcps[i]);
-    ASSERT(r == 0);
+    ASSERT_OK(r);
     r = uv_tcp_bind(&tcps[i], (const struct sockaddr *) &addr, 0);
-    ASSERT(r == 0);
+    ASSERT_OK(r);
     uv_unref((uv_handle_t*) &tcps[i]);
   }
 
   fd = open("/dev/tty", O_RDONLY);
   if (fd < 0) {
-    LOGF("Cannot open /dev/tty as read-only: %s\n", strerror(errno));
+    fprintf(stderr, "Cannot open /dev/tty as read-only: %s\n", strerror(errno));
+    fflush(stderr);
     return TEST_SKIP;
   }
 
   r = uv_tty_init(uv_default_loop(), &tty, fd, 1);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
 
   r = uv_read_start((uv_stream_t*) &tty, alloc_cb, read_cb);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
 
   /* Emulate user-input */
   str = "got some input\n"
@@ -123,14 +126,14 @@ TEST_IMPL(osx_select_many_fds) {
         "feel pretty happy\n";
   for (i = 0, len = strlen(str); i < len; i++) {
     r = ioctl(fd, TIOCSTI, str + i);
-    ASSERT(r == 0);
+    ASSERT_OK(r);
   }
 
   uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
-  ASSERT(read_count == 3);
+  ASSERT_EQ(3, read_count);
 
-  MAKE_VALGRIND_HAPPY();
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
   return 0;
 }
 

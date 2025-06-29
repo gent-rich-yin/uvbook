@@ -40,13 +40,14 @@ static unsigned int got_connections;
 static unsigned int close_cb_called;
 static unsigned int write_cb_called;
 static unsigned int read_cb_called;
+static unsigned int pending_incoming;
 
 static void close_cb(uv_handle_t* handle) {
   close_cb_called++;
 }
 
 static void write_cb(uv_write_t* req, int status) {
-  ASSERT(status == 0);
+  ASSERT_OK(status);
   write_cb_called++;
 }
 
@@ -56,22 +57,25 @@ static void connect_cb(uv_connect_t* req, int status) {
   uv_stream_t* outgoing;
 
   if (req == &tcp_check_req) {
-    ASSERT(status != 0);
+    ASSERT(status);
 
-    /* Close check and incoming[0], time to finish test */
-    uv_close((uv_handle_t*) &tcp_incoming[0], close_cb);
+    /*
+     * Time to finish the test: close both the check and pending incoming
+     * connections
+     */
+    uv_close((uv_handle_t*) &tcp_incoming[pending_incoming], close_cb);
     uv_close((uv_handle_t*) &tcp_check, close_cb);
     return;
   }
 
-  ASSERT(status == 0);
-  ASSERT(connect_reqs <= req);
-  ASSERT(req <= connect_reqs + ARRAY_SIZE(connect_reqs));
+  ASSERT_OK(status);
+  ASSERT_LE(connect_reqs, req);
+  ASSERT_LE(req, connect_reqs + ARRAY_SIZE(connect_reqs));
   i = req - connect_reqs;
 
   buf = uv_buf_init("x", 1);
   outgoing = (uv_stream_t*) &tcp_outgoing[i];
-  ASSERT(0 == uv_write(&write_reqs[i], outgoing, &buf, 1, write_cb));
+  ASSERT_OK(uv_write(&write_reqs[i], outgoing, &buf, 1, write_cb));
 }
 
 static void alloc_cb(uv_handle_t* handle, size_t size, uv_buf_t* buf) {
@@ -84,35 +88,37 @@ static void read_cb(uv_stream_t* stream, ssize_t nread, const uv_buf_t* buf) {
   uv_loop_t* loop;
   unsigned int i;
 
-  /* Only first stream should receive read events */
-  ASSERT(stream == (uv_stream_t*) &tcp_incoming[0]);
-  ASSERT(0 == uv_read_stop(stream));
-  ASSERT(1 == nread);
+  pending_incoming = (uv_tcp_t*) stream - &tcp_incoming[0];
+  ASSERT_LT(pending_incoming, got_connections);
+  ASSERT_OK(uv_read_stop(stream));
+  ASSERT_EQ(1, nread);
 
   loop = stream->loop;
   read_cb_called++;
 
   /* Close all active incomings, except current one */
-  for (i = 1; i < got_connections; i++)
-    uv_close((uv_handle_t*) &tcp_incoming[i], close_cb);
-
-  /* Create new fd that should be one of the closed incomings */
-  ASSERT(0 == uv_tcp_init(loop, &tcp_check));
-  ASSERT(0 == uv_tcp_connect(&tcp_check_req,
-                             &tcp_check,
-                             (const struct sockaddr*) &addr,
-                             connect_cb));
-  ASSERT(0 == uv_read_start((uv_stream_t*) &tcp_check, alloc_cb, read_cb));
+  for (i = 0; i < got_connections; i++) {
+    if (i != pending_incoming)
+      uv_close((uv_handle_t*) &tcp_incoming[i], close_cb);
+  }
 
   /* Close server, so no one will connect to it */
   uv_close((uv_handle_t*) &tcp_server, close_cb);
+
+  /* Create new fd that should be one of the closed incomings */
+  ASSERT_OK(uv_tcp_init(loop, &tcp_check));
+  ASSERT_OK(uv_tcp_connect(&tcp_check_req,
+                           &tcp_check,
+                           (const struct sockaddr*) &addr,
+                           connect_cb));
+  ASSERT_OK(uv_read_start((uv_stream_t*) &tcp_check, alloc_cb, read_cb));
 }
 
 static void connection_cb(uv_stream_t* server, int status) {
   unsigned int i;
   uv_tcp_t* incoming;
 
-  ASSERT(server == (uv_stream_t*) &tcp_server);
+  ASSERT_PTR_EQ(server, (uv_stream_t*) &tcp_server);
 
   /* Ignore tcp_check connection */
   if (got_connections == ARRAY_SIZE(tcp_incoming))
@@ -120,8 +126,8 @@ static void connection_cb(uv_stream_t* server, int status) {
 
   /* Accept everyone */
   incoming = &tcp_incoming[got_connections++];
-  ASSERT(0 == uv_tcp_init(server->loop, incoming));
-  ASSERT(0 == uv_accept(server, (uv_stream_t*) incoming));
+  ASSERT_OK(uv_tcp_init(server->loop, incoming));
+  ASSERT_OK(uv_accept(server, (uv_stream_t*) incoming));
 
   if (got_connections != ARRAY_SIZE(tcp_incoming))
     return;
@@ -129,7 +135,7 @@ static void connection_cb(uv_stream_t* server, int status) {
   /* Once all clients are accepted - start reading */
   for (i = 0; i < ARRAY_SIZE(tcp_incoming); i++) {
     incoming = &tcp_incoming[i];
-    ASSERT(0 == uv_read_start((uv_stream_t*) incoming, alloc_cb, read_cb));
+    ASSERT_OK(uv_read_start((uv_stream_t*) incoming, alloc_cb, read_cb));
   }
 }
 
@@ -156,33 +162,37 @@ TEST_IMPL(tcp_close_accept) {
    */
 
   loop = uv_default_loop();
-  ASSERT(0 == uv_ip4_addr("127.0.0.1", TEST_PORT, &addr));
+  ASSERT_OK(uv_ip4_addr("127.0.0.1", TEST_PORT, &addr));
 
-  ASSERT(0 == uv_tcp_init(loop, &tcp_server));
-  ASSERT(0 == uv_tcp_bind(&tcp_server, (const struct sockaddr*) &addr, 0));
-  ASSERT(0 == uv_listen((uv_stream_t*) &tcp_server,
-                        ARRAY_SIZE(tcp_outgoing),
-                        connection_cb));
+  ASSERT_OK(uv_tcp_init(loop, &tcp_server));
+  ASSERT_OK(uv_tcp_bind(&tcp_server, (const struct sockaddr*) &addr, 0));
+  ASSERT_OK(uv_listen((uv_stream_t*) &tcp_server,
+                      ARRAY_SIZE(tcp_outgoing),
+                      connection_cb));
 
   for (i = 0; i < ARRAY_SIZE(tcp_outgoing); i++) {
     client = tcp_outgoing + i;
 
-    ASSERT(0 == uv_tcp_init(loop, client));
-    ASSERT(0 == uv_tcp_connect(&connect_reqs[i],
-                               client,
-                               (const struct sockaddr*) &addr,
-                               connect_cb));
+    ASSERT_OK(uv_tcp_init(loop, client));
+    ASSERT_OK(uv_tcp_connect(&connect_reqs[i],
+                             client,
+                             (const struct sockaddr*) &addr,
+                             connect_cb));
   }
 
   uv_run(loop, UV_RUN_DEFAULT);
 
-  ASSERT(ARRAY_SIZE(tcp_outgoing) == got_connections);
-  ASSERT((ARRAY_SIZE(tcp_outgoing) + 2) == close_cb_called);
-  ASSERT(ARRAY_SIZE(tcp_outgoing) == write_cb_called);
-  ASSERT(1 == read_cb_called);
+  ASSERT_EQ(ARRAY_SIZE(tcp_outgoing), got_connections);
+  ASSERT_EQ((ARRAY_SIZE(tcp_outgoing) + 2), close_cb_called);
+  ASSERT_EQ(ARRAY_SIZE(tcp_outgoing), write_cb_called);
+  ASSERT_EQ(1, read_cb_called);
 
-  MAKE_VALGRIND_HAPPY();
+  MAKE_VALGRIND_HAPPY(loop);
   return 0;
 }
 
-#endif  /* !_WIN32 */
+#else
+
+typedef int file_has_no_tests; /* ISO C forbids an empty translation unit. */
+
+#endif /* !_WIN32 */

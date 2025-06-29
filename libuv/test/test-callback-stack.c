@@ -48,7 +48,7 @@ static int shutdown_cb_called = 0;
 static void alloc_cb(uv_handle_t* handle, size_t size, uv_buf_t* buf) {
   buf->len = size;
   buf->base = malloc(size);
-  ASSERT(buf->base != NULL);
+  ASSERT_NOT_NULL(buf->base);
 }
 
 
@@ -60,7 +60,7 @@ static void close_cb(uv_handle_t* handle) {
 
 
 static void shutdown_cb(uv_shutdown_t* req, int status) {
-  ASSERT(status == 0);
+  ASSERT_OK(status);
   ASSERT(nested == 0 && "shutdown_cb must be called from a fresh stack");
 
   shutdown_cb_called++;
@@ -77,7 +77,7 @@ static void read_cb(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf) {
     return;
 
   } else if (nread < 0) {
-    ASSERT(nread == UV_EOF);
+    ASSERT_EQ(nread, UV_EOF);
 
     nested++;
     uv_close((uv_handle_t*)tcp, close_cb);
@@ -88,10 +88,9 @@ static void read_cb(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf) {
 
   bytes_received += nread;
 
-  /* We call shutdown here because when bytes_received == sizeof MESSAGE */
-  /* there will be no more data sent nor received, so here it would be */
-  /* possible for a backend to to call shutdown_cb immediately and *not* */
-  /* from a fresh stack. */
+  /* We call shutdown here because when bytes_received == sizeof MESSAGE there
+   * will be no more data sent nor received, so here it would be possible for a
+   * backend to call shutdown_cb immediately and *not* from a fresh stack. */
   if (bytes_received == sizeof MESSAGE) {
     nested++;
 
@@ -106,7 +105,7 @@ static void read_cb(uv_stream_t* tcp, ssize_t nread, const uv_buf_t* buf) {
 
 
 static void timer_cb(uv_timer_t* handle) {
-  ASSERT(handle == &timer);
+  ASSERT_PTR_EQ(handle, &timer);
   ASSERT(nested == 0 && "timer_cb must be called from a fresh stack");
 
   puts("Timeout complete. Now read data...");
@@ -126,20 +125,20 @@ static void timer_cb(uv_timer_t* handle) {
 static void write_cb(uv_write_t* req, int status) {
   int r;
 
-  ASSERT(status == 0);
+  ASSERT_OK(status);
   ASSERT(nested == 0 && "write_cb must be called from a fresh stack");
 
   puts("Data written. 500ms timeout...");
 
-  /* After the data has been sent, we're going to wait for a while, then */
-  /* start reading. This makes us certain that the message has been echoed */
-  /* back to our receive buffer when we start reading. This maximizes the */
-  /* temptation for the backend to use dirty stack for calling read_cb. */
+  /* After the data has been sent, we're going to wait for a while, then start
+   * reading. This makes us certain that the message has been echoed back to
+   * our receive buffer when we start reading. This maximizes the temptation
+   * for the backend to use dirty stack for calling read_cb. */
   nested++;
   r = uv_timer_init(uv_default_loop(), &timer);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
   r = uv_timer_start(&timer, timer_cb, 500, 0);
-  ASSERT(r == 0);
+  ASSERT_OK(r);
   nested--;
 
   write_cb_called++;
@@ -151,7 +150,7 @@ static void connect_cb(uv_connect_t* req, int status) {
 
   puts("Connected. Write some data to echo server...");
 
-  ASSERT(status == 0);
+  ASSERT_OK(status);
   ASSERT(nested == 0 && "connect_cb must be called from a fresh stack");
 
   nested++;
@@ -172,7 +171,7 @@ static void connect_cb(uv_connect_t* req, int status) {
 TEST_IMPL(callback_stack) {
   struct sockaddr_in addr;
 
-  ASSERT(0 == uv_ip4_addr("127.0.0.1", TEST_PORT, &addr));
+  ASSERT_OK(uv_ip4_addr("127.0.0.1", TEST_PORT, &addr));
 
   if (uv_tcp_init(uv_default_loop(), &client)) {
     FATAL("uv_tcp_init failed");
@@ -192,14 +191,19 @@ TEST_IMPL(callback_stack) {
 
   uv_run(uv_default_loop(), UV_RUN_DEFAULT);
 
-  ASSERT(nested == 0);
-  ASSERT(connect_cb_called == 1 && "connect_cb must be called exactly once");
-  ASSERT(write_cb_called == 1 && "write_cb must be called exactly once");
-  ASSERT(timer_cb_called == 1 && "timer_cb must be called exactly once");
-  ASSERT(bytes_received == sizeof MESSAGE);
-  ASSERT(shutdown_cb_called == 1 && "shutdown_cb must be called exactly once");
-  ASSERT(close_cb_called == 2 && "close_cb must be called exactly twice");
+  ASSERT_OK(nested);
+  ASSERT_NE(connect_cb_called == 1 && \
+            "connect_cb must be called exactly once", 0);
+  ASSERT_NE(write_cb_called == 1 && "write_cb must be called exactly once",
+            0);
+  ASSERT_NE(timer_cb_called == 1 && "timer_cb must be called exactly once",
+            0);
+  ASSERT_EQ(bytes_received, sizeof MESSAGE);
+  ASSERT_NE(shutdown_cb_called == 1 && \
+            "shutdown_cb must be called exactly once", 0);
+  ASSERT_NE(close_cb_called == 2 && "close_cb must be called exactly twice",
+            0);
 
-  MAKE_VALGRIND_HAPPY();
+  MAKE_VALGRIND_HAPPY(uv_default_loop());
   return 0;
 }
