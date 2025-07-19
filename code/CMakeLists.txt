@@ -1,6 +1,7 @@
 add_subdirectory("helloworld")
 add_subdirectory("idle-basic")
 add_subdirectory("idle-data")
+add_subdirectory("onchange")
 add_subdirectory("uvcat")
 add_subdirectory("uvtee")
 add_subdirectory("uvtee-buf-count")
