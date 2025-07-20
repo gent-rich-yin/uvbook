@@ -29,8 +29,9 @@ int run_with_loop_info(uv_loop_t* loop, uv_run_mode mode) {
 
     uv_idle_t idler;
     idler.data = loop_info;
-    // uv_idle_init(loop, &idler);
-    // uv_idle_start(&idler, idle_cb);
+    uv_idle_init(loop, &idler);
+    uv_unref((uv_handle_t*) &idler);
+    uv_idle_start(&idler, idle_cb);
 
     get_time(&loop_info->start_ts);
     int return_code = uv_run(loop, mode);
