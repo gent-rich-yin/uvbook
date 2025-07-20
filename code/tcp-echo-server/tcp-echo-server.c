@@ -1,3 +1,5 @@
+// @TODO: Print client info when connected
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -34,15 +36,18 @@ void echo_write(uv_write_t *req, int status) {
 
 void echo_read(uv_stream_t *client, ssize_t nread, const uv_buf_t *buf) {
     if (nread > 0) {
+        printf("Received: %s\n", buf->base);
         write_req_t *req = (write_req_t*) malloc(sizeof(write_req_t));
         req->buf = uv_buf_init(buf->base, nread);
         uv_write((uv_write_t*) req, client, &req->buf, 1, echo_write);
+        printf("Sent: %s\n", req->buf.base);
         return;
     }
     if (nread < 0) {
         if (nread != UV_EOF)
             fprintf(stderr, "Read error %s\n", uv_err_name(nread));
         uv_close((uv_handle_t*) client, NULL);
+        printf("Closed connection"); // @TODO why this is not called?
     }
 
     free(buf->base);
@@ -75,6 +80,7 @@ int main() {
 
     uv_tcp_bind(&server, (const struct sockaddr*)&addr, 0);
     int r = uv_listen((uv_stream_t*) &server, DEFAULT_BACKLOG, on_new_connection);
+    printf("Server is listening at %d\n", DEFAULT_PORT);
     if (r) {
         fprintf(stderr, "Listen error %s\n", uv_strerror(r));
         return 1;
